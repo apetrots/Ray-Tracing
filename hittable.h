@@ -3,10 +3,13 @@
 
 #include "ray.h"
 
+struct material;
+
 struct hit_record
 {
     point3 point;
     vec3 normal;
+    shared_ptr<material> material;
     float time;
     bool front_face;
     

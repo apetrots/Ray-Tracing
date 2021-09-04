@@ -14,13 +14,33 @@
 #include "ray.h"
 #include "sphere.h"
 #include "hittable_list.h"
+#include "camera.h"
+#include "material.h"
 
-color ray_color(const ray& r, const hittable_list &world) {
+color ray_color(const ray& r, const hittable_list &world, int depth) {
     hit_record rec;
-    if( world.hit(r, 0, INF, rec ) )
+
+    if (depth <= 0)
+        return color(0,0,0);
+
+    // t_min = 0.001 so rays don't collide with surface they were just reflected off of (called shadow acne)
+    if( world.hit(r, 0.001, INF, rec ) )
     {
+        ray scattered;
+        color attenuation;
+        if (rec.material->scatter(r, rec, attenuation, scattered))
+            return attenuation * ray_color(scattered, world, depth-1); 
+
+        return color(0,0,0);
+
+        // using random_unit_vector over random_in_unit_sphere results in more uniform scattering of light rays (fewer rays scattering toward the normal)
+        // point3 target = rec.point + rec.normal + random_unit_vector();
+
+        // alternative diffuse method that doesn't offset by surface's normal, about equivalent but has minor differences 
+        // point3 target = rec.point + random_in_hemisphere(rec.normal);
+
         // -1 to 1 -> 0 to 1
-        return 0.5 * (rec.normal + color(1,1,1));
+        // return 0.5 * ray_color(ray(rec.point, target - rec.point), world, depth-1);
     }
 
     vec3 dir = unit_vector(r.direction());
@@ -29,46 +49,49 @@ color ray_color(const ray& r, const hittable_list &world) {
     return (1.0 - t) * color(1.0, 1.0, 1.0) + t*color(0.5, 0.7, 1.0);
 }
 
-
 int main()
 {
-    const double aspect_ratio = 16.0 / 9.0;
-    const int image_width = 400;
-    const int image_height = static_cast<int>(image_width / aspect_ratio);
-
-    double viewport_height = 2.0;
-    double viewport_width = aspect_ratio * viewport_height;
-    double focal_length = 1.0;
-
-    point3 origin(0, 0, 0);
-    vec3 right(viewport_width, 0, 0);
-    vec3 up(0, viewport_height, 0);
-    point3 btm_left = origin - (right / 2) - (up / 2) - vec3(0, 0, focal_length);
-
-    image_buffer img(image_width, image_height);
+    image_buffer img(IMAGE_WIDTH, IMAGE_HEIGHT);
 
     hittable_list world;
-    world.add(make_shared<sphere>(point3(0, 0, -1), 0.5));
-    world.add(make_shared<sphere>(point3(0, -100.5, -1), 100));
 
-    for( int y = image_height - 1; y >= 0; y--)
+    auto material_ground = make_shared<lambertian>(color(0.8, 0.8, 0.0));
+    auto material_center = make_shared<lambertian>(color(0.1, 0.2, 0.5));
+    auto material_left   = make_shared<dielectric>(1.5);
+    auto material_right  = make_shared<metal>(color(0.8, 0.6, 0.2), 0.0);
+
+    world.add(make_shared<sphere>(point3( 0.0, -100.5, -1.0), 100.0, material_ground));
+    world.add(make_shared<sphere>(point3( 0.0,    0.0, -1.0),   0.5, material_center));
+    world.add(make_shared<sphere>(point3(-1.0,    0.0, -1.0),   0.5, material_left));
+    world.add(make_shared<sphere>(point3(-1.0,    0.0, -1.0), -0.45, material_left));
+    world.add(make_shared<sphere>(point3( 1.0,    0.0, -1.0),   0.5, material_right));
+
+    point3 from(3,3,2);
+    point3 to(0,0,-1);
+    camera cam(from, to, vec3(0,1,0), 20, 2.0, (to-from).length());
+
+    for( int y = IMAGE_HEIGHT - 1; y >= 0; y--)
     {
         std::cerr << "\rScanlines remaining: " << y << ' ' << std::flush;
-        for( int x = 0; x < image_width; x++)
+        for( int x = 0; x < IMAGE_WIDTH; x++)
         {
-            double u = double(x) / (image_width - 1);
-            double v = double(y) / (image_height - 1);
-            ray r(origin, btm_left + u * right + v * up - origin);
+            color final_col(0, 0, 0);
+            for (int s = 0; s < SAMPLES_PER_PIXEL; s++)
+            {
+                double u = (double(x) + random_double()) / (IMAGE_WIDTH - 1);
+                double v = (double(y) + random_double()) / (IMAGE_HEIGHT - 1);
+                ray ray = cam.get_ray(u, v);
 
-            color col = ray_color(r, world);
+                final_col += ray_color(ray, world, MAX_DEPTH);
+            }
 
-            img.write_color(x, y, col);
+            img.write_color(x, y, final_col);
         }
     }
 
     std::cerr << "\nWriting PNG...\n";
 
-    stbi_write_png("image.png", image_width, image_height, STBI_rgb, img.buf, img.image_width * 3 * sizeof(img.buf[0]));
+    stbi_write_png("image.png", IMAGE_WIDTH, IMAGE_HEIGHT, STBI_rgb, img.buf, IMAGE_WIDTH * 3 * sizeof(img.buf[0]));
 
     std::cerr << "\nDone.\n";
 }
